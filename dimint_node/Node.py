@@ -1,13 +1,15 @@
 import threading, zmq, json
 
 class Node(threading.Thread):
-    def __init__(self, host, port):
+    def __init__(self, host, port, pull_port):
         self.host = host
         self.port = port
         self.address = 'tcp://{0}:{1}'.format(self.host, self.port)
         context = zmq.Context()
-        self.socket = context.socket(zmq.REP)
-        self.socket.bind(self.address)
+        self.pull_socket = context.socket(zmq.PULL)
+        self.pull_socket.bind('tcp://{0}:{1}'.format(self.host, self.pull_port))
+        self.socket = context.socket(zmq.DEALER)
+        self.socket.connect(self.address)
         self.storage = {}
 
     def run(self):
@@ -15,8 +17,8 @@ class Node(threading.Thread):
             message = self.socket.recv()
             result = self.__process(message)
             response = json.dumps(result).encode('utf-8')
-            print (result)
-            self.socket.send(response)
+            print (response)
+            self.socket.send_multipart(response)
 
     def __process(self, message):
         print('Request {0}'.format(message))
