@@ -55,6 +55,10 @@ class Node(threading.Thread):
             elif cmd == 'set':
                 value = request['value']
                 self.storage[key] = value
+            elif cmd == 'state':
+                print('asdf')
+                #value = memory_usage_psutil()
+                #print(value)
         except:
             value = None
         response = {}
