@@ -16,7 +16,7 @@ class Node(threading.Thread):
         self.address = 'tcp://{0}:{1}'.format(self.host, self.port)
         self.context = zmq.Context()
         self.pull_socket = self.context.socket(zmq.PULL)
-        self.pull_socket.bind('tcp://{0}:{1}'.format(self.host, pull_port))
+        self.pull_socket.bind('tcp://*:{0}'.format(pull_port))
         self.socket = self.context.socket(zmq.DEALER)
         self.socket.connect(self.address)
         self.storage = {}
@@ -35,7 +35,6 @@ class Node(threading.Thread):
             sockets = dict(poll.poll())
             if self.pull_socket in sockets:
                 ident, message = self.pull_socket.recv_multipart()
-                print(message)
                 result = self.__process(message)
                 response = json.dumps(result).encode('utf-8')
                 print (response)
