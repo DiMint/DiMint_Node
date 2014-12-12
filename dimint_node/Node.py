@@ -2,13 +2,15 @@ import json
 import socket
 import threading
 import traceback
+import time
 
 from kazoo.client import KazooClient
 import zmq
 
 
 class Node(threading.Thread):
-    def __init__(self, host, port, pull_port, push_to_slave_port):
+    def __init__(self, host, port, pull_port, push_to_slave_port,
+                 receive_slave_port):
         threading.Thread.__init__(self)
         self.host = host
         self.port = port
@@ -23,12 +25,19 @@ class Node(threading.Thread):
         self.storage = {}
         self.push_to_slave_socket = self.context.socket(zmq.PUB)
         self.push_to_slave_socket.bind('tcp://*:{0}'.format(self.push_to_slave_port))
+
+        # this port/socket is only used for new slave's dump request.
+        self.receive_slave_port = receive_slave_port
+        self.receive_slave_socket = self.context.socket(zmq.REP)
+        self.receive_slave_socket.bind('tcp://*:{0}'.format(self.receive_slave_port))
+
         self.pull_from_master_socket = None
         self.__connect()
 
     def run(self):
         poll = zmq.Poller()
         poll.register(self.pull_socket, zmq.POLLIN)
+        poll.register(self.receive_slave_socket, zmq.POLLIN)
         if self.pull_from_master_socket is not None:
             poll.register(self.pull_from_master_socket, zmq.POLLIN)
 
@@ -43,6 +52,10 @@ class Node(threading.Thread):
             elif self.pull_from_master_socket in sockets:
                 result = self.pull_from_master_socket.recv()
                 self.__slave_process(result.decode('utf-8').split(' ', 1)[-1])
+            elif self.receive_slave_socket in sockets:
+                result = json.loads(self.receive_slave_socket.recv().decode('utf-8'))
+                if result['cmd'] == 'give_dump':
+                    self.receive_slave_socket.send_json(self.storage)
 
     def __process(self, message):
         print('Request {0}'.format(message))
@@ -57,8 +70,6 @@ class Node(threading.Thread):
                 value = request['value']
                 self.storage[key] = value
                 self.__send_to_slave('log', oper='set', key=key, value=value)
-            elif cmd == 'add_slave':
-                self.__send_to_slave('dump', data=self.storage)
         except:
             traceback.print_exc()
         response = {}
@@ -103,6 +114,7 @@ class Node(threading.Thread):
                            'cmd_receive_port': self.pull_port,
                            'transfer_port': 5575,  # temp
                            'push_to_slave_port': self.push_to_slave_port,
+                           'receive_slave_port': self.receive_slave_port,
                            }
         self.socket.send_json(connect_request)
         recv_data = self.socket.recv_json()
@@ -118,6 +130,12 @@ class Node(threading.Thread):
             self.pull_from_master_socket = self.context.socket(zmq.SUB)
             self.pull_from_master_socket.connect(recv_data.get('master_addr'))
             self.pull_from_master_socket.setsockopt(zmq.SUBSCRIBE, b'1')
+            req_dump_socket = self.context.socket(zmq.REQ)
+            req_dump_socket.connect(recv_data.get('master_receive_addr'))
+            req_dump_socket.send_json({'cmd': 'give_dump'})
+            data = req_dump_socket.recv_json()
+            self.storage = data
+            req_dump_socket.close()
         else:
             self.is_slave = False
 
