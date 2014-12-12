@@ -68,10 +68,9 @@ class Node(threading.Thread):
                            'transfer_port': 5575,  # temp
                            'push_to_slave_port': self.push_to_slave_port,
                            }
-        self.socket.send_multipart([b'', json.dumps(connect_request).encode('utf-8')])
-        ident, recv_data = self.socket.recv_multipart()
-        print('Response:{0}'.format(recv_data))
-        recv_data = json.loads(recv_data.decode('utf-8'))
+        self.socket.send_json(connect_request)
+        recv_data = self.socket.recv_json()
+        print('Response {0}'.format(recv_data))
         self.node_id = recv_data.get('node_id')
         self.role = recv_data.get('role')
         self.zookeeper_hosts = recv_data.get('zookeeper_hosts')
@@ -81,7 +80,6 @@ class Node(threading.Thread):
         if self.role == 'slave':
             self.pull_from_master_socket = self.context.socket(zmq.PULL)
             self.pull_from_master_socket.connect(recv_data.get('master_addr'))
-        self.socket.close()
 
     def get_ip(self):
         return [(s.connect(('8.8.8.8', 80)), s.getsockname()[0], s.close())
