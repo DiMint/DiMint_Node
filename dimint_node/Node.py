@@ -1,6 +1,7 @@
 import json
 import socket
 import threading
+import traceback
 
 from kazoo.client import KazooClient
 import zmq
@@ -20,7 +21,7 @@ class Node(threading.Thread):
         self.socket = self.context.socket(zmq.DEALER)
         self.socket.connect(self.address)
         self.storage = {}
-        self.push_to_slave_socket = self.context.socket(zmq.PUSH)
+        self.push_to_slave_socket = self.context.socket(zmq.PUB)
         self.push_to_slave_socket.bind('tcp://*:{0}'.format(self.push_to_slave_port))
         self.pull_from_master_socket = None
         self.__connect()
@@ -39,26 +40,62 @@ class Node(threading.Thread):
                 response = json.dumps(result).encode('utf-8')
                 print (response)
                 self.socket.send_multipart([ident, response])
-            else:
-                # TODO: handle message from master node
-                pass
+            elif self.pull_from_master_socket in sockets:
+                result = self.pull_from_master_socket.recv()
+                self.__slave_process(result.decode('utf-8').split(' ', 1)[-1])
 
     def __process(self, message):
         print('Request {0}'.format(message))
+        value = None
         try:
             request = json.loads(message.decode('utf-8'))
             cmd = request['cmd']
-            key = request['key']
+            key = request.get('key')
             if cmd == 'get':
                 value = self.storage[key]
             elif cmd == 'set':
                 value = request['value']
                 self.storage[key] = value
+                self.__send_to_slave('log', oper='set', key=key, value=value)
+            elif cmd == 'add_slave':
+                self.__send_to_slave('dump', data=self.storage)
         except:
-            value = None
+            traceback.print_exc()
         response = {}
         response['value'] = value
         return response
+
+    def __slave_process(self, message):
+        print('Request Slave work {0}'.format(message))
+        try:
+            request = json.loads(message)
+            cmd = request.get('cmd')
+            if cmd == 'log':
+                oper = request.get('oper')
+                key = request.get('key')
+                value = request.get('value')
+                if oper == 'set':
+                    self.storage[key] = value
+                elif oper == 'incr':
+                    self.storage[key] += 1
+                elif oper == 'decr':
+                    self.storage[key] -= 1
+            elif cmd == 'dump':
+                if request.get('data') and len(request['data']) > 0:
+                    self.storage = request['data']
+        except:
+            traceback.print_exc()
+
+    def __send_to_slave(self, cmd, **values):
+        if cmd == 'dump' and len(values.get('data', {})) <= 0:
+            return
+
+        send_data = {
+            'cmd': cmd,
+        }
+        send_data.update(values)
+        send_data = json.dumps(send_data)
+        self.push_to_slave_socket.send('{0} {1}'.format(1, send_data).encode('utf-8'))
 
     def __connect(self):
         connect_request = {'cmd': 'connect',
@@ -77,8 +114,12 @@ class Node(threading.Thread):
         self.register_to_zookeeper()
 
         if self.role == 'slave':
-            self.pull_from_master_socket = self.context.socket(zmq.PULL)
+            self.is_slave = True
+            self.pull_from_master_socket = self.context.socket(zmq.SUB)
             self.pull_from_master_socket.connect(recv_data.get('master_addr'))
+            self.pull_from_master_socket.setsockopt(zmq.SUBSCRIBE, b'1')
+        else:
+            self.is_slave = False
 
     def get_ip(self):
         return [(s.connect(('8.8.8.8', 80)), s.getsockname()[0], s.close())
