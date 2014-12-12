@@ -2,10 +2,21 @@ import json
 import socket
 import threading
 import traceback
-
+import time
 from kazoo.client import KazooClient
 import zmq
 
+class NodeStateTask(threading.Thread):
+    __zk = None
+
+    def __init__(self, zk):
+        threading.Thread.__init__(self)
+        self.__zk = zk
+    
+    def run(self):
+        while True:
+            print('asdf')
+            time.sleep(1)
 
 class Node(threading.Thread):
     def __init__(self, host, port, pull_port, push_to_slave_port):
@@ -25,6 +36,7 @@ class Node(threading.Thread):
         self.push_to_slave_socket.bind('tcp://*:{0}'.format(self.push_to_slave_port))
         self.pull_from_master_socket = None
         self.__connect()
+        NodeStateTask(self.zk).start()
 
     def run(self):
         poll = zmq.Poller()
