@@ -5,18 +5,38 @@ import traceback
 import time
 from kazoo.client import KazooClient
 import zmq
+import logging
+import memory
+import json
+
+def get_node_msg(zk, node_path):
+    node = zk.get(node_path)
+    return json.loads(node[0].decode('utf-8'))
+
+def set_node_msg(zk, node_path, msg):
+    zk.set(node_path, json.dump(msg).encode('utf-8'))
 
 class NodeStateTask(threading.Thread):
     __zk = None
+    __node_id = None
 
-    def __init__(self, zk):
+    def __init__(self, zk, node_id):
         threading.Thread.__init__(self)
         self.__zk = zk
+        self.__node_id = node_id
     
     def run(self):
         while True:
-            print('asdf')
-            time.sleep(1)
+            logging.info('NodeStateTask works')
+            if self.__zk is None:
+                return
+            if not  self.__zk.exists('/dimint/node/list/{0}'.format(self.__node_id)):
+                return
+            msg = get_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id))
+            msg['memory'] = memory.memory()
+            logging.info(msg)
+            set_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id), msg)
+            time.sleep(10)
 
 class Node(threading.Thread):
     def __init__(self, host, port, pull_port, push_to_slave_port):
@@ -36,7 +56,7 @@ class Node(threading.Thread):
         self.push_to_slave_socket.bind('tcp://*:{0}'.format(self.push_to_slave_port))
         self.pull_from_master_socket = None
         self.__connect()
-        NodeStateTask(self.zk).start()
+        NodeStateTask(self.zk, self.node_id).start()
 
     def run(self):
         poll = zmq.Poller()
