@@ -29,8 +29,10 @@ class NodeTransferTask(threading.Thread):
 
     def run(self):
         while True:
-            msg = self.transfer_socket.recv()
-            self.transfer_socket.send('transfer line established on target node'.encode('utf-8'))
+            msg = json.loads(self.transfer_socket.recv().decode('utf-8'))
+            self.node.storage.update(msg['dict'])
+            response = {}
+            self.transfer_socket.send(json.dumps(response).encode('utf-8'))
 
 class NodeStateTask(threading.Thread):
     __zk = None
@@ -59,7 +61,7 @@ class NodeStateTask(threading.Thread):
             msg['memory_info'] = p.memory_info()
             msg['is_running'] = p.is_running()
             set_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id), msg)
-            time.sleep(10)
+            time.sleep(30)
 
 
 class NodeReceiveMasterTask(threading.Thread):
@@ -132,6 +134,7 @@ class Node(threading.Thread):
     def __process(self, message):
         print('Node {0}, Request {1}'.format(self.node_id, message))
         value = None
+        response = {}
         try:
             request = json.loads(message.decode('utf-8'))
             cmd = request['cmd']
@@ -152,9 +155,11 @@ class Node(threading.Thread):
                 self.master_receive_thread.start()
             elif cmd == 'move_key':
                 self.__move_key(request)
+                response['cmd'] = cmd
+                response['src_id'] = self.node_id
+                response['target_id'] = request.get('target_node_id')
         except:
             traceback.print_exc()
-        response = {}
         response['value'] = value
         return response
 
@@ -195,9 +200,18 @@ class Node(threading.Thread):
         target_node = request['target_node']
         self.transfer_socket = self.context.socket(zmq.REQ)
         self.transfer_socket.connect(target_node)
-        print('target node {0}, source id {1}'.format(target_node, self.node_id))
-        self.transfer_socket.send('transfer line established on source node'.encode('utf-8'))
-        print(self.transfer_socket.recv())
+        move_dict = {}
+        for k in key_list:
+            move_dict[k] = self.storage[k]
+        msg = {}
+        msg['cmd'] = 'move_key'
+        msg['dict'] = move_dict
+        self.transfer_socket.send(json.dumps(msg).encode('utf-8'))
+        recv_msg = self.transfer_socket.recv()
+        # TODO : additional error handling
+        for k in key_list:
+            del self.storage[k]
+        print (self.storage)
         self.transfer_socket.close()
 
     def __connect(self):
