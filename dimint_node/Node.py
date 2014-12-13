@@ -5,16 +5,17 @@ import traceback
 import time
 from kazoo.client import KazooClient
 import zmq
-import logging
 import memory
 import json
 
 def get_node_msg(zk, node_path):
     node = zk.get(node_path)
+    if not node[0]:
+        return {}
     return json.loads(node[0].decode('utf-8'))
 
 def set_node_msg(zk, node_path, msg):
-    zk.set(node_path, json.dump(msg).encode('utf-8'))
+    zk.set(node_path, json.dumps(msg).encode('utf-8'))
 
 class NodeStateTask(threading.Thread):
     __zk = None
@@ -27,14 +28,13 @@ class NodeStateTask(threading.Thread):
     
     def run(self):
         while True:
-            logging.info('NodeStateTask works')
+            print('NodeStateTask works')
             if self.__zk is None:
                 return
             if not  self.__zk.exists('/dimint/node/list/{0}'.format(self.__node_id)):
                 return
             msg = get_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id))
             msg['memory'] = memory.memory()
-            logging.info(msg)
             set_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id), msg)
             time.sleep(10)
 
