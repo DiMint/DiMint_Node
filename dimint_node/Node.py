@@ -26,7 +26,7 @@ class NodeStateTask(threading.Thread):
         threading.Thread.__init__(self)
         self.__zk = zk
         self.__node_id = node_id
-    
+
     def run(self):
         while True:
             print('NodeStateTask works')
@@ -46,6 +46,26 @@ class NodeStateTask(threading.Thread):
             msg['is_running'] = p.is_running()
             set_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id), msg)
             time.sleep(10)
+
+
+class NodeReceiveMasterTask(threading.Thread):
+    def __init__(self, master_addr, callback_func):
+        threading.Thread.__init__(self)
+        self.socket = zmq.Context().socket(zmq.SUB)
+        self.socket.connect(master_addr if master_addr.startswith('tcp') else
+                            'tcp://{0}'.format(master_addr))
+        self.socket.setsockopt(zmq.SUBSCRIBE, b'1')
+        self.callback_func = callback_func
+
+    def run(self):
+        while True:
+            result = self.socket.recv()
+            self.callback_func(result.decode('utf-8').split(' ', 1)[-1])
+
+    def __del__(self):
+        self.socket.close()
+        self._stop().set()
+
 
 class Node(threading.Thread):
     def __init__(self, host, port, pull_port, push_to_slave_port,
@@ -70,7 +90,6 @@ class Node(threading.Thread):
         self.receive_slave_socket = self.context.socket(zmq.REP)
         self.receive_slave_socket.bind('tcp://*:{0}'.format(self.receive_slave_port))
 
-        self.pull_from_master_socket = None
         self.__connect()
         NodeStateTask(self.zk, self.node_id).start()
 
@@ -78,8 +97,6 @@ class Node(threading.Thread):
         poll = zmq.Poller()
         poll.register(self.pull_socket, zmq.POLLIN)
         poll.register(self.receive_slave_socket, zmq.POLLIN)
-        if self.pull_from_master_socket is not None:
-            poll.register(self.pull_from_master_socket, zmq.POLLIN)
 
         while True:
             sockets = dict(poll.poll())
@@ -89,9 +106,6 @@ class Node(threading.Thread):
                 response = json.dumps(result).encode('utf-8')
                 print (response)
                 self.socket.send_multipart([ident, response])
-            elif self.pull_from_master_socket in sockets:
-                result = self.pull_from_master_socket.recv()
-                self.__slave_process(result.decode('utf-8').split(' ', 1)[-1])
             elif self.receive_slave_socket in sockets:
                 result = json.loads(self.receive_slave_socket.recv().decode('utf-8'))
                 if result['cmd'] == 'give_dump':
@@ -110,6 +124,14 @@ class Node(threading.Thread):
                 value = request['value']
                 self.storage[key] = value
                 self.__send_to_slave('log', oper='set', key=key, value=value)
+            elif cmd == 'nominate_master':
+                self.node_id = request.get('node_id')
+                self.is_slave = False
+                self.master_receive_thread = None
+            elif cmd == 'change_master':
+                self.master_receive_thread = NodeReceiveMasterTask(
+                    request.get('master_addr'), self.__slave_process)
+                self.master_receive_thread.start()
         except:
             traceback.print_exc()
         response = {}
@@ -167,9 +189,11 @@ class Node(threading.Thread):
 
         if self.role == 'slave':
             self.is_slave = True
-            self.pull_from_master_socket = self.context.socket(zmq.SUB)
-            self.pull_from_master_socket.connect(recv_data.get('master_addr'))
-            self.pull_from_master_socket.setsockopt(zmq.SUBSCRIBE, b'1')
+
+            self.master_receive_thread = NodeReceiveMasterTask(
+                recv_data.get('master_addr'), self.__slave_process)
+            self.master_receive_thread.start()
+
             req_dump_socket = self.context.socket(zmq.REQ)
             req_dump_socket.connect(recv_data.get('master_receive_addr'))
             req_dump_socket.send_json({'cmd': 'give_dump'})
@@ -191,3 +215,13 @@ class Node(threading.Thread):
         self.zk.ensure_path('/dimint/node/list')
         self.zk.create('/dimint/node/list/{0}'.format(self.node_id),
                        ephemeral=True)
+
+
+if __name__ == '__main__':
+    import sys
+    if len(sys.argv) != 4:
+        sys.exit(1)
+    node = Node('127.0.0.1', 5557, int(sys.argv[1]),
+                int(sys.argv[2]), int(sys.argv[3]))
+
+    node.start()
