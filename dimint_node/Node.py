@@ -19,15 +19,18 @@ def set_node_msg(zk, node_path, msg):
     zk.set(node_path, json.dumps(msg).encode('utf-8'))
 
 class NodeTransferTask(threading.Thread):
-    def __init__(self, context, transfer_socket):
+    def __init__(self, context, transfer_port, node):
         threading.Thread.__init__(self)
-        self.transfer_socket = transfer_socket
+        self.transfer_port = transfer_port
+        self.context = context
+        self.transfer_socket = self.context.socket(zmq.REP)
+        self.transfer_socket.bind('tcp://*:{0}'.format(self.transfer_port))
+        self.node = node
     
     def run(self):
         while True:
             msg = self.transfer_socket.recv()
-            print ('transfer line established on target node')
-            self.transfer_socket.send('sdfsdfsdf'.encode('utf-8'))
+            self.transfer_socket.send('transfer line established on target node'.encode('utf-8'))
 
 class NodeStateTask(threading.Thread):
     __zk = None
@@ -66,7 +69,6 @@ class Node(threading.Thread):
         self.port = port
         self.pull_port = pull_port
         self.push_to_slave_port = push_to_slave_port
-        self.transfer_port = transfer_port
         self.address = 'tcp://{0}:{1}'.format(self.host, self.port)
         self.context = zmq.Context()
         self.pull_socket = self.context.socket(zmq.PULL)
@@ -83,12 +85,11 @@ class Node(threading.Thread):
         self.receive_slave_socket.bind('tcp://*:{0}'.format(self.receive_slave_port))
 
         self.pull_from_master_socket = None
+        self.transfer_port = transfer_port
         self.__connect()
         NodeStateTask(self.zk, self.node_id).start()
 
-        self.transfer_socket = self.context.socket(zmq.REP)
-        self.transfer_socket.bind('tcp://*:{0}'.format(self.transfer_port))
-        self.transfer_task = NodeTransferTask(self.context, self.transfer_socket)
+        self.transfer_task = NodeTransferTask(self.context, self.transfer_port, self)
         self.transfer_task.start()
 
     def run(self):
@@ -170,12 +171,12 @@ class Node(threading.Thread):
     def __move_key(self, request):
         key_list = request['key_list']
         target_node = request['target_node']
-        self.transfer_socket.close()
         self.transfer_socket = self.context.socket(zmq.REQ)
         self.transfer_socket.connect(target_node)
         print('target node {0}, source id {1}'.format(target_node, self.node_id))
         self.transfer_socket.send('transfer line established on source node'.encode('utf-8'))
         print(self.transfer_socket.recv())
+        self.transfer_socket.close()
     
     def __connect(self):
         connect_request = {'cmd': 'connect',
