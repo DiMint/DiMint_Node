@@ -1,4 +1,4 @@
-import json
+import json 
 import socket
 import threading
 import traceback
@@ -7,15 +7,26 @@ import time
 from kazoo.client import KazooClient
 import zmq
 
+class NodeTransferTask(threading.Thread):
+    def __init__(self, context, transfer_socket):
+        threading.Thread.__init__(self)
+        self.transfer_socket = transfer_socket
+    
+    def run(self):
+        while True:
+            msg = self.transfer_socket.recv()
+            print ('transfer line established on target node')
+            self.transfer_socket.send('sdfsdfsdf'.encode('utf-8'))
 
 class Node(threading.Thread):
     def __init__(self, host, port, pull_port, push_to_slave_port,
-                 receive_slave_port):
+                 receive_slave_port, transfer_port):
         threading.Thread.__init__(self)
         self.host = host
         self.port = port
         self.pull_port = pull_port
         self.push_to_slave_port = push_to_slave_port
+        self.transfer_port = transfer_port
         self.address = 'tcp://{0}:{1}'.format(self.host, self.port)
         self.context = zmq.Context()
         self.pull_socket = self.context.socket(zmq.PULL)
@@ -34,6 +45,11 @@ class Node(threading.Thread):
         self.pull_from_master_socket = None
         self.__connect()
 
+        self.transfer_socket = self.context.socket(zmq.REP)
+        self.transfer_socket.bind('tcp://*:{0}'.format(self.transfer_port))
+        self.transfer_task = NodeTransferTask(self.context, self.transfer_socket)
+        self.transfer_task.start()
+
     def run(self):
         poll = zmq.Poller()
         poll.register(self.pull_socket, zmq.POLLIN)
@@ -47,7 +63,7 @@ class Node(threading.Thread):
                 ident, message = self.pull_socket.recv_multipart()
                 result = self.__process(message)
                 response = json.dumps(result).encode('utf-8')
-                print (response)
+                print ('Node {0}, Response {1}'.format(self.node_id, response))
                 self.socket.send_multipart([ident, response])
             elif self.pull_from_master_socket in sockets:
                 result = self.pull_from_master_socket.recv()
@@ -58,7 +74,7 @@ class Node(threading.Thread):
                     self.receive_slave_socket.send_json(self.storage)
 
     def __process(self, message):
-        print('Request {0}'.format(message))
+        print('Node {0}, Request {1}'.format(self.node_id, message))
         value = None
         try:
             request = json.loads(message.decode('utf-8'))
@@ -70,6 +86,8 @@ class Node(threading.Thread):
                 value = request['value']
                 self.storage[key] = value
                 self.__send_to_slave('log', oper='set', key=key, value=value)
+            elif cmd == 'move_key':
+                self.__move_key(request) 
         except:
             traceback.print_exc()
         response = {}
@@ -107,12 +125,22 @@ class Node(threading.Thread):
         send_data.update(values)
         send_data = json.dumps(send_data)
         self.push_to_slave_socket.send('{0} {1}'.format(1, send_data).encode('utf-8'))
-
+    
+    def __move_key(self, request):
+        key_list = request['key_list']
+        target_node = request['target_node']
+        self.transfer_socket.close()
+        self.transfer_socket = self.context.socket(zmq.REQ)
+        self.transfer_socket.connect(target_node)
+        print('target node {0}, source id {1}'.format(target_node, self.node_id))
+        self.transfer_socket.send('transfer line established on source node'.encode('utf-8'))
+        print(self.transfer_socket.recv())
+    
     def __connect(self):
         connect_request = {'cmd': 'connect',
                            'ip': self.get_ip(),
                            'cmd_receive_port': self.pull_port,
-                           'transfer_port': 5575,  # temp
+                           'transfer_port': self.transfer_port,
                            'push_to_slave_port': self.push_to_slave_port,
                            'receive_slave_port': self.receive_slave_port,
                            }
