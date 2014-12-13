@@ -5,8 +5,9 @@ import traceback
 import time
 from kazoo.client import KazooClient
 import zmq
-import memory
 import json
+import psutil
+import os
 
 def get_node_msg(zk, node_path):
     node = zk.get(node_path)
@@ -34,7 +35,14 @@ class NodeStateTask(threading.Thread):
             if not  self.__zk.exists('/dimint/node/list/{0}'.format(self.__node_id)):
                 return
             msg = get_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id))
-            msg['memory'] = memory.memory()
+            p = psutil.Process(os.getpid())
+            msg['cwd'] = p.cwd()
+            msg['cmdline'] = p.cmdline()
+            msg['status'] = p.status()
+            msg['create_time'] = p.create_time()
+            msg['cpu_percent'] = p.cpu_percent()
+            msg['memory_percent'] = p.memory_percent()
+            msg['memory_info'] = p.memory_info()
             set_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id), msg)
             time.sleep(10)
 
