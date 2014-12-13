@@ -18,6 +18,20 @@ def get_node_msg(zk, node_path):
 def set_node_msg(zk, node_path, msg):
     zk.set(node_path, json.dumps(msg).encode('utf-8'))
 
+class NodeTransferTask(threading.Thread):
+    def __init__(self, context, transfer_port, node):
+        threading.Thread.__init__(self)
+        self.transfer_port = transfer_port
+        self.context = context
+        self.transfer_socket = self.context.socket(zmq.REP)
+        self.transfer_socket.bind('tcp://*:{0}'.format(self.transfer_port))
+        self.node = node
+
+    def run(self):
+        while True:
+            msg = self.transfer_socket.recv()
+            self.transfer_socket.send('transfer line established on target node'.encode('utf-8'))
+
 class NodeStateTask(threading.Thread):
     __zk = None
     __node_id = None
@@ -69,7 +83,7 @@ class NodeReceiveMasterTask(threading.Thread):
 
 class Node(threading.Thread):
     def __init__(self, host, port, pull_port, push_to_slave_port,
-                 receive_slave_port):
+                 receive_slave_port, transfer_port):
         threading.Thread.__init__(self)
         self.host = host
         self.port = port
@@ -90,8 +104,12 @@ class Node(threading.Thread):
         self.receive_slave_socket = self.context.socket(zmq.REP)
         self.receive_slave_socket.bind('tcp://*:{0}'.format(self.receive_slave_port))
 
+        self.transfer_port = transfer_port
         self.__connect()
         NodeStateTask(self.zk, self.node_id).start()
+
+        self.transfer_task = NodeTransferTask(self.context, self.transfer_port, self)
+        self.transfer_task.start()
 
     def run(self):
         poll = zmq.Poller()
@@ -104,7 +122,7 @@ class Node(threading.Thread):
                 ident, message = self.pull_socket.recv_multipart()
                 result = self.__process(message)
                 response = json.dumps(result).encode('utf-8')
-                print (response)
+                print ('Node {0}, Response {1}'.format(self.node_id, response))
                 self.socket.send_multipart([ident, response])
             elif self.receive_slave_socket in sockets:
                 result = json.loads(self.receive_slave_socket.recv().decode('utf-8'))
@@ -112,7 +130,7 @@ class Node(threading.Thread):
                     self.receive_slave_socket.send_json(self.storage)
 
     def __process(self, message):
-        print('Request {0}'.format(message))
+        print('Node {0}, Request {1}'.format(self.node_id, message))
         value = None
         try:
             request = json.loads(message.decode('utf-8'))
@@ -132,6 +150,8 @@ class Node(threading.Thread):
                 self.master_receive_thread = NodeReceiveMasterTask(
                     request.get('master_addr'), self.__slave_process)
                 self.master_receive_thread.start()
+            elif cmd == 'move_key':
+                self.__move_key(request)
         except:
             traceback.print_exc()
         response = {}
@@ -170,11 +190,21 @@ class Node(threading.Thread):
         send_data = json.dumps(send_data)
         self.push_to_slave_socket.send('{0} {1}'.format(1, send_data).encode('utf-8'))
 
+    def __move_key(self, request):
+        key_list = request['key_list']
+        target_node = request['target_node']
+        self.transfer_socket = self.context.socket(zmq.REQ)
+        self.transfer_socket.connect(target_node)
+        print('target node {0}, source id {1}'.format(target_node, self.node_id))
+        self.transfer_socket.send('transfer line established on source node'.encode('utf-8'))
+        print(self.transfer_socket.recv())
+        self.transfer_socket.close()
+
     def __connect(self):
         connect_request = {'cmd': 'connect',
                            'ip': self.get_ip(),
                            'cmd_receive_port': self.pull_port,
-                           'transfer_port': 5575,  # temp
+                           'transfer_port': self.transfer_port,
                            'push_to_slave_port': self.push_to_slave_port,
                            'receive_slave_port': self.receive_slave_port,
                            }
