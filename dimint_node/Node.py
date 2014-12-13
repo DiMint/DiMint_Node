@@ -5,18 +5,20 @@ import traceback
 import time
 from kazoo.client import KazooClient
 import zmq
-import json
 import psutil
 import os
 
-def get_node_msg(zk, node_path):
-    node = zk.get(node_path)
-    if not node[0]:
-        return {}
-    return json.loads(node[0].decode('utf-8'))
-
-def set_node_msg(zk, node_path, msg):
-    zk.set(node_path, json.dumps(msg).encode('utf-8'))
+class ZooKeeperManager():
+    @staticmethod
+    def get_node_msg(zk, node_path):
+        node = zk.get(node_path)
+        if not node[0]:
+            return {}
+        return json.loads(node[0].decode('utf-8'))
+    
+    @staticmethod
+    def set_node_msg(zk, node_path, msg):
+        zk.set(node_path, json.dumps(msg).encode('utf-8'))
 
 class NodeStateTask(threading.Thread):
     __zk = None
@@ -34,7 +36,7 @@ class NodeStateTask(threading.Thread):
                 return
             if not  self.__zk.exists('/dimint/node/list/{0}'.format(self.__node_id)):
                 return
-            msg = get_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id))
+            msg = ZooKeeperManager.get_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id))
             p = psutil.Process(os.getpid())
             msg['cwd'] = p.cwd()
             msg['name'] = p.name()
@@ -44,7 +46,7 @@ class NodeStateTask(threading.Thread):
             msg['memory_percent'] = p.memory_percent()
             msg['memory_info'] = p.memory_info()
             msg['is_running'] = p.is_running()
-            set_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id), msg)
+            ZooKeeperManager.set_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id), msg)
             time.sleep(10)
 
 class Node(threading.Thread):
