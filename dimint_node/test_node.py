@@ -1,5 +1,5 @@
-from Node import Node
+import dimint_node
 
 if __name__ == "__main__":
     for i in range(10):
-        Node('127.0.0.1', 5557, 15556 + i, 5558 + i, 5600 + i).start()
+        dimint_node.start_node(pull_port=15556 + i, push_to_slave_port=5558 + i, receive_slave_port=5600 + i)
