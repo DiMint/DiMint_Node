@@ -3,9 +3,20 @@ import socket
 import threading
 import traceback
 import time
-
 from kazoo.client import KazooClient
 import zmq
+import json
+import psutil
+import os
+
+def get_node_msg(zk, node_path):
+    node = zk.get(node_path)
+    if not node[0]:
+        return {}
+    return json.loads(node[0].decode('utf-8'))
+
+def set_node_msg(zk, node_path, msg):
+    zk.set(node_path, json.dumps(msg).encode('utf-8'))
 
 class NodeTransferTask(threading.Thread):
     def __init__(self, context, transfer_socket):
@@ -17,6 +28,35 @@ class NodeTransferTask(threading.Thread):
             msg = self.transfer_socket.recv()
             print ('transfer line established on target node')
             self.transfer_socket.send('sdfsdfsdf'.encode('utf-8'))
+
+class NodeStateTask(threading.Thread):
+    __zk = None
+    __node_id = None
+
+    def __init__(self, zk, node_id):
+        threading.Thread.__init__(self)
+        self.__zk = zk
+        self.__node_id = node_id
+    
+    def run(self):
+        while True:
+            print('NodeStateTask works')
+            if self.__zk is None:
+                return
+            if not  self.__zk.exists('/dimint/node/list/{0}'.format(self.__node_id)):
+                return
+            msg = get_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id))
+            p = psutil.Process(os.getpid())
+            msg['cwd'] = p.cwd()
+            msg['name'] = p.name()
+            msg['cmdline'] = p.cmdline()
+            msg['create_time'] = p.create_time()
+            msg['cpu_percent'] = p.cpu_percent()
+            msg['memory_percent'] = p.memory_percent()
+            msg['memory_info'] = p.memory_info()
+            msg['is_running'] = p.is_running()
+            set_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id), msg)
+            time.sleep(10)
 
 class Node(threading.Thread):
     def __init__(self, host, port, pull_port, push_to_slave_port,
@@ -44,6 +84,7 @@ class Node(threading.Thread):
 
         self.pull_from_master_socket = None
         self.__connect()
+        NodeStateTask(self.zk, self.node_id).start()
 
         self.transfer_socket = self.context.socket(zmq.REP)
         self.transfer_socket.bind('tcp://*:{0}'.format(self.transfer_port))
