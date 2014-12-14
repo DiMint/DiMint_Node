@@ -224,10 +224,7 @@ class Node(threading.Thread):
             del self.storage[k]
         print (self.storage)
         self.transfer_socket.close()
-        self.push_to_slave_socket.send('1 {0}'.format({
-            'cmd': 'dump',
-            'data': self.storage,
-        }).encode('utf-8'))
+        self.__send_to_slave('dump', data=self.storage)
 
     def __connect(self):
         connect_request = {'cmd': 'connect',
