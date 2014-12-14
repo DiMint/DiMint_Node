@@ -332,7 +332,6 @@ def main(argv = sys.argv[1:]):
         elif opt == '--transfer_port':
             transfer_port = arg
     start_node(config_path, host, port, pull_port, push_to_slave_port, receive_slave_port, transfer_port)
-    os._exit(0)
 
 if __name__ == '__main__':
     main()
