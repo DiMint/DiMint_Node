@@ -16,7 +16,7 @@ class ZooKeeperManager():
         if not node[0]:
             return {}
         return json.loads(node[0].decode('utf-8'))
-    
+
     @staticmethod
     def set_node_msg(zk, node_path, msg):
         zk.set(node_path, json.dumps(msg).encode('utf-8'))
@@ -143,8 +143,11 @@ class Node(threading.Thread):
             cmd = request['cmd']
             key = request.get('key')
             if cmd == 'get':
-                value = self.storage[key]
-                response['value'] = value
+                try:
+                    value = self.storage[key]
+                    response['value'] = value
+                except KeyError:
+                    print("Error: There is no key {0}. current storage status is {1}".format(key, self.storage))
             elif cmd == 'set':
                 value = request['value']
                 self.storage[key] = value
@@ -218,6 +221,10 @@ class Node(threading.Thread):
             del self.storage[k]
         print (self.storage)
         self.transfer_socket.close()
+        self.push_to_slave_socket.send('1 {0}'.format({
+            'cmd': 'dump',
+            'data': self.storage,
+        }).encode('utf-8'))
 
     def __connect(self):
         connect_request = {'cmd': 'connect',
