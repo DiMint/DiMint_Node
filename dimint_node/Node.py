@@ -42,10 +42,11 @@ class NodeStateTask(threading.Thread):
     __zk = None
     __node_id = None
 
-    def __init__(self, zk, node_id):
+    def __init__(self, zk, node_id, node_thread):
         threading.Thread.__init__(self)
         self.__zk = zk
         self.__node_id = node_id
+        self.__node_thread = node_thread
 
     def run(self):
         while True:
@@ -64,6 +65,7 @@ class NodeStateTask(threading.Thread):
             msg['memory_percent'] = p.memory_percent()
             msg['memory_info'] = p.memory_info()
             msg['is_running'] = p.is_running()
+            msg['key_count'] = len(self.__node_thread.storage)
             ZooKeeperManager.set_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id), msg)
             time.sleep(10)
 
@@ -112,7 +114,7 @@ class Node(threading.Thread):
 
         self.transfer_port = transfer_port
         self.__connect()
-        NodeStateTask(self.zk, self.node_id).start()
+        NodeStateTask(self.zk, self.node_id, self).start()
 
         self.transfer_task = NodeTransferTask(self.context, self.transfer_port, self)
         self.transfer_task.start()
