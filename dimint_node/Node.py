@@ -141,10 +141,12 @@ class Node(threading.Thread):
             key = request.get('key')
             if cmd == 'get':
                 value = self.storage[key]
+                response['value'] = value
             elif cmd == 'set':
                 value = request['value']
                 self.storage[key] = value
                 self.__send_to_slave('log', oper='set', key=key, value=value)
+                response['value'] = value
             elif cmd == 'nominate_master':
                 self.node_id = request.get('node_id')
                 self.is_slave = False
@@ -155,12 +157,10 @@ class Node(threading.Thread):
                 self.master_receive_thread.start()
             elif cmd == 'move_key':
                 self.__move_key(request)
-                response['cmd'] = cmd
+                response = request.copy()
                 response['src_id'] = self.node_id
-                response['target_id'] = request.get('target_node_id')
         except:
             traceback.print_exc()
-        response['value'] = value
         return response
 
     def __slave_process(self, message):
@@ -196,6 +196,7 @@ class Node(threading.Thread):
         self.push_to_slave_socket.send('{0} {1}'.format(1, send_data).encode('utf-8'))
 
     def __move_key(self, request):
+        print('current storage: {0}'.format(self.storage))
         key_list = request['key_list']
         target_node = request['target_node']
         self.transfer_socket = self.context.socket(zmq.REQ)
@@ -206,6 +207,7 @@ class Node(threading.Thread):
         msg = {}
         msg['cmd'] = 'move_key'
         msg['dict'] = move_dict
+        msg['key_list'] = key_list
         self.transfer_socket.send(json.dumps(msg).encode('utf-8'))
         recv_msg = self.transfer_socket.recv()
         # TODO : additional error handling
