@@ -5,18 +5,21 @@ import traceback
 import time
 from kazoo.client import KazooClient
 import zmq
-import json
 import psutil
 import os
+import sys, getopt
 
-def get_node_msg(zk, node_path):
-    node = zk.get(node_path)
-    if not node[0]:
-        return {}
-    return json.loads(node[0].decode('utf-8'))
-
-def set_node_msg(zk, node_path, msg):
-    zk.set(node_path, json.dumps(msg).encode('utf-8'))
+class ZooKeeperManager():
+    @staticmethod
+    def get_node_msg(zk, node_path):
+        node = zk.get(node_path)
+        if not node[0]:
+            return {}
+        return json.loads(node[0].decode('utf-8'))
+    
+    @staticmethod
+    def set_node_msg(zk, node_path, msg):
+        zk.set(node_path, json.dumps(msg).encode('utf-8'))
 
 class NodeTransferTask(threading.Thread):
     def __init__(self, context, transfer_port, node):
@@ -50,7 +53,7 @@ class NodeStateTask(threading.Thread):
                 return
             if not  self.__zk.exists('/dimint/node/list/{0}'.format(self.__node_id)):
                 return
-            msg = get_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id))
+            msg = ZooKeeperManager.get_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id))
             p = psutil.Process(os.getpid())
             msg['cwd'] = p.cwd()
             msg['name'] = p.name()
@@ -60,8 +63,8 @@ class NodeStateTask(threading.Thread):
             msg['memory_percent'] = p.memory_percent()
             msg['memory_info'] = p.memory_info()
             msg['is_running'] = p.is_running()
-            set_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id), msg)
-            time.sleep(30)
+            ZooKeeperManager.set_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id), msg)
+            time.sleep(10)
 
 
 class NodeReceiveMasterTask(threading.Thread):
@@ -262,12 +265,58 @@ class Node(threading.Thread):
         self.zk.create('/dimint/node/list/{0}'.format(self.node_id),
                        ephemeral=True)
 
+def start_node(config_path=None, host=None, port=None, pull_port=None, push_to_slave_port=None, receive_slave_port=None, transfer_port=None):
+    if not config_path is None:
+        with open(config_path, 'r') as config_stream:
+            config = json.loads(config_stream.read())
+    else:
+        config = {}
+    if not host is None:
+        config['host'] = host
+    if not port is None:
+        config['port'] = port
+    if not pull_port is None:
+        config['pull_port'] = pull_port
+    if not push_to_slave_port is None:
+        config['push_to_slave_port'] = push_to_slave_port
+    if not receive_slave_port is None:
+        config['receive_slave_port'] = receive_slave_port
+    if not transfer_port is None:
+        config['transfer_port'] = transfer_port
+    if not config is None:
+        Node(config['host'], config['port'], config['pull_port'], config['push_to_slave_port'], config['receive_slave_port'], config['transfer_port']).start()
+
+def main():
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], '', ['help', 'config_path', 'host', 'port', 'pull_port', 'push_to_slave_port', 'receive_slave_port'])
+    except getopt.GetoptError:
+        sys.exit(2)
+    config_path = 'dimint_node/dimint_node.config'
+    host = None
+    port = None
+    pull_port = None
+    push_to_slave_port = None
+    receive_slave_port = None
+    transfer_port = None
+    for opt, arg in opts:
+        if opt == '-help':
+            print('dimint_node.py --config_path=config_path --host=host --port=port --pull_port=pull_port --push_to_slave_port=push_to_slave_port --receive_slave_port=receive_slave_port --transfer_port=transfer_port')
+            sys.exit()
+        elif opt == '--config_path':
+            config_path = arg
+        elif opt == '--host':
+            host = arg
+        elif opt == '--port':
+            port = arg
+        elif opt == '--pull_port':
+            pull_port = arg
+        elif opt == '--push_to_slave_port':
+            push_to_slave_port = arg
+        elif opt == '--receive_slave_port':
+            receive_slave_port = arg
+        elif opt == '--transfer_port':
+            transfer_port = arg
+    start_node(config_path, host, port, pull_port, push_to_slave_port, receive_slave_port, transfer_port)
 
 if __name__ == '__main__':
-    import sys
-    if len(sys.argv) != 4:
-        sys.exit(1)
-    node = Node('127.0.0.1', 5557, int(sys.argv[1]),
-                int(sys.argv[2]), int(sys.argv[3]))
-
-    node.start()
+    main()
