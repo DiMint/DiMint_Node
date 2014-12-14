@@ -7,6 +7,7 @@ from kazoo.client import KazooClient
 import zmq
 import psutil
 import os
+import sys, getopt
 
 class ZooKeeperManager():
     @staticmethod
@@ -20,6 +21,20 @@ class ZooKeeperManager():
     def set_node_msg(zk, node_path, msg):
         zk.set(node_path, json.dumps(msg).encode('utf-8'))
 
+class NodeTransferTask(threading.Thread):
+    def __init__(self, context, transfer_port, node):
+        threading.Thread.__init__(self)
+        self.transfer_port = transfer_port
+        self.context = context
+        self.transfer_socket = self.context.socket(zmq.REP)
+        self.transfer_socket.bind('tcp://*:{0}'.format(self.transfer_port))
+        self.node = node
+
+    def run(self):
+        while True:
+            msg = self.transfer_socket.recv()
+            self.transfer_socket.send('transfer line established on target node'.encode('utf-8'))
+
 class NodeStateTask(threading.Thread):
     __zk = None
     __node_id = None
@@ -28,7 +43,7 @@ class NodeStateTask(threading.Thread):
         threading.Thread.__init__(self)
         self.__zk = zk
         self.__node_id = node_id
-    
+
     def run(self):
         while True:
             print('NodeStateTask works')
@@ -49,9 +64,29 @@ class NodeStateTask(threading.Thread):
             ZooKeeperManager.set_node_msg(self.__zk, '/dimint/node/list/{0}'.format(self.__node_id), msg)
             time.sleep(10)
 
+
+class NodeReceiveMasterTask(threading.Thread):
+    def __init__(self, master_addr, callback_func):
+        threading.Thread.__init__(self)
+        self.socket = zmq.Context().socket(zmq.SUB)
+        self.socket.connect(master_addr if master_addr.startswith('tcp') else
+                            'tcp://{0}'.format(master_addr))
+        self.socket.setsockopt(zmq.SUBSCRIBE, b'1')
+        self.callback_func = callback_func
+
+    def run(self):
+        while True:
+            result = self.socket.recv()
+            self.callback_func(result.decode('utf-8').split(' ', 1)[-1])
+
+    def __del__(self):
+        self.socket.close()
+        self._stop().set()
+
+
 class Node(threading.Thread):
     def __init__(self, host, port, pull_port, push_to_slave_port,
-                 receive_slave_port):
+                 receive_slave_port, transfer_port):
         threading.Thread.__init__(self)
         self.host = host
         self.port = port
@@ -72,16 +107,17 @@ class Node(threading.Thread):
         self.receive_slave_socket = self.context.socket(zmq.REP)
         self.receive_slave_socket.bind('tcp://*:{0}'.format(self.receive_slave_port))
 
-        self.pull_from_master_socket = None
+        self.transfer_port = transfer_port
         self.__connect()
         NodeStateTask(self.zk, self.node_id).start()
+
+        self.transfer_task = NodeTransferTask(self.context, self.transfer_port, self)
+        self.transfer_task.start()
 
     def run(self):
         poll = zmq.Poller()
         poll.register(self.pull_socket, zmq.POLLIN)
         poll.register(self.receive_slave_socket, zmq.POLLIN)
-        if self.pull_from_master_socket is not None:
-            poll.register(self.pull_from_master_socket, zmq.POLLIN)
 
         while True:
             sockets = dict(poll.poll())
@@ -89,18 +125,15 @@ class Node(threading.Thread):
                 ident, message = self.pull_socket.recv_multipart()
                 result = self.__process(message)
                 response = json.dumps(result).encode('utf-8')
-                print (response)
+                print ('Node {0}, Response {1}'.format(self.node_id, response))
                 self.socket.send_multipart([ident, response])
-            elif self.pull_from_master_socket in sockets:
-                result = self.pull_from_master_socket.recv()
-                self.__slave_process(result.decode('utf-8').split(' ', 1)[-1])
             elif self.receive_slave_socket in sockets:
                 result = json.loads(self.receive_slave_socket.recv().decode('utf-8'))
                 if result['cmd'] == 'give_dump':
                     self.receive_slave_socket.send_json(self.storage)
 
     def __process(self, message):
-        print('Request {0}'.format(message))
+        print('Node {0}, Request {1}'.format(self.node_id, message))
         value = None
         try:
             request = json.loads(message.decode('utf-8'))
@@ -112,6 +145,16 @@ class Node(threading.Thread):
                 value = request['value']
                 self.storage[key] = value
                 self.__send_to_slave('log', oper='set', key=key, value=value)
+            elif cmd == 'nominate_master':
+                self.node_id = request.get('node_id')
+                self.is_slave = False
+                self.master_receive_thread = None
+            elif cmd == 'change_master':
+                self.master_receive_thread = NodeReceiveMasterTask(
+                    request.get('master_addr'), self.__slave_process)
+                self.master_receive_thread.start()
+            elif cmd == 'move_key':
+                self.__move_key(request)
         except:
             traceback.print_exc()
         response = {}
@@ -150,11 +193,21 @@ class Node(threading.Thread):
         send_data = json.dumps(send_data)
         self.push_to_slave_socket.send('{0} {1}'.format(1, send_data).encode('utf-8'))
 
+    def __move_key(self, request):
+        key_list = request['key_list']
+        target_node = request['target_node']
+        self.transfer_socket = self.context.socket(zmq.REQ)
+        self.transfer_socket.connect(target_node)
+        print('target node {0}, source id {1}'.format(target_node, self.node_id))
+        self.transfer_socket.send('transfer line established on source node'.encode('utf-8'))
+        print(self.transfer_socket.recv())
+        self.transfer_socket.close()
+
     def __connect(self):
         connect_request = {'cmd': 'connect',
                            'ip': self.get_ip(),
                            'cmd_receive_port': self.pull_port,
-                           'transfer_port': 5575,  # temp
+                           'transfer_port': self.transfer_port,
                            'push_to_slave_port': self.push_to_slave_port,
                            'receive_slave_port': self.receive_slave_port,
                            }
@@ -169,9 +222,11 @@ class Node(threading.Thread):
 
         if self.role == 'slave':
             self.is_slave = True
-            self.pull_from_master_socket = self.context.socket(zmq.SUB)
-            self.pull_from_master_socket.connect(recv_data.get('master_addr'))
-            self.pull_from_master_socket.setsockopt(zmq.SUBSCRIBE, b'1')
+
+            self.master_receive_thread = NodeReceiveMasterTask(
+                recv_data.get('master_addr'), self.__slave_process)
+            self.master_receive_thread.start()
+
             req_dump_socket = self.context.socket(zmq.REQ)
             req_dump_socket.connect(recv_data.get('master_receive_addr'))
             req_dump_socket.send_json({'cmd': 'give_dump'})
@@ -193,3 +248,59 @@ class Node(threading.Thread):
         self.zk.ensure_path('/dimint/node/list')
         self.zk.create('/dimint/node/list/{0}'.format(self.node_id),
                        ephemeral=True)
+
+def start_node(config_path=None, host=None, port=None, pull_port=None, push_to_slave_port=None, receive_slave_port=None, transfer_port=None):
+    if not config_path is None:
+        with open(config_path, 'r') as config_stream:
+            config = json.loads(config_stream.read())
+    else:
+        config = {}
+    if not host is None:
+        config['host'] = host
+    if not port is None:
+        config['port'] = port
+    if not pull_port is None:
+        config['pull_port'] = pull_port
+    if not push_to_slave_port is None:
+        config['push_to_slave_port'] = push_to_slave_port
+    if not receive_slave_port is None:
+        config['receive_slave_port'] = receive_slave_port
+    if not transfer_port is None:
+        config['transfer_port'] = transfer_port
+    if not config is None:
+        Node(config['host'], config['port'], config['pull_port'], config['push_to_slave_port'], config['receive_slave_port'], config['transfer_port']).start()
+
+def main(argv):
+    try:
+        opts, args = getopt.getopt(argv, '', ['help', 'config_path', 'host', 'port', 'pull_port', 'push_to_slave_port', 'receive_slave_port'])
+    except getopt.GetoptError:
+        sys.exit(2)
+    config_path = './dimint_node.config'
+    host = None
+    port = None
+    pull_port = None
+    push_to_slave_port = None
+    receive_slave_port = None
+    transfer_port = None
+    for opt, arg in opts:
+        if opt == '-help':
+            print('dimint_node.py --config_path=config_path --host=host --port=port --pull_port=pull_port --push_to_slave_port=push_to_slave_port --receive_slave_port=receive_slave_port --transfer_port=transfer_port')
+            sys.exit()
+        elif opt == '--config_path':
+            config_path = arg
+        elif opt == '--host':
+            host = arg
+        elif opt == '--port':
+            port = arg
+        elif opt == '--pull_port':
+            pull_port = arg
+        elif opt == '--push_to_slave_port':
+            push_to_slave_port = arg
+        elif opt == '--receive_slave_port':
+            receive_slave_port = arg
+        elif opt == '--transfer_port':
+            transfer_port = arg
+    start_node(config_path, host, port, pull_port, push_to_slave_port, receive_slave_port, transfer_port)
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
