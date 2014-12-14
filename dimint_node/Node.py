@@ -270,12 +270,12 @@ def start_node(config_path=None, host=None, port=None, pull_port=None, push_to_s
     if not config is None:
         Node(config['host'], config['port'], config['pull_port'], config['push_to_slave_port'], config['receive_slave_port'], config['transfer_port']).start()
 
-def main(argv):
+def main():
     try:
-        opts, args = getopt.getopt(argv, '', ['help', 'config_path', 'host', 'port', 'pull_port', 'push_to_slave_port', 'receive_slave_port'])
+        opts, args = getopt.getopt(sys.argv[1:], '', ['help', 'config_path', 'host', 'port', 'pull_port', 'push_to_slave_port', 'receive_slave_port'])
     except getopt.GetoptError:
         sys.exit(2)
-    config_path = './dimint_node.config'
+    config_path = 'dimint_node/dimint_node.config'
     host = None
     port = None
     pull_port = None
@@ -303,4 +303,4 @@ def main(argv):
     start_node(config_path, host, port, pull_port, push_to_slave_port, receive_slave_port, transfer_port)
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    main()
