@@ -17,7 +17,7 @@ class ZooKeeperManager():
         if not node[0]:
             return {}
         return json.loads(node[0].decode('utf-8'))
-    
+
     @staticmethod
     def set_node_msg(zk, node_path, msg):
         zk.set(node_path, json.dumps(msg).encode('utf-8'))
@@ -33,8 +33,10 @@ class NodeTransferTask(threading.Thread):
 
     def run(self):
         while True:
-            msg = self.transfer_socket.recv()
-            self.transfer_socket.send('transfer line established on target node'.encode('utf-8'))
+            msg = json.loads(self.transfer_socket.recv().decode('utf-8'))
+            self.node.storage.update(msg['dict'])
+            response = {}
+            self.transfer_socket.send(json.dumps(response).encode('utf-8'))
 
 class NodeStateTask(threading.Thread):
     __zk = None
@@ -136,16 +138,22 @@ class Node(threading.Thread):
     def __process(self, message):
         print('Node {0}, Request {1}'.format(self.node_id, message))
         value = None
+        response = {}
         try:
             request = json.loads(message.decode('utf-8'))
             cmd = request['cmd']
             key = request.get('key')
             if cmd == 'get':
-                value = self.storage[key]
+                try:
+                    value = self.storage[key]
+                    response['value'] = value
+                except KeyError:
+                    print("Error: There is no key {0}. current storage status is {1}".format(key, self.storage))
             elif cmd == 'set':
                 value = request['value']
                 self.storage[key] = value
                 self.__send_to_slave('log', oper='set', key=key, value=value)
+                response['value'] = value
             elif cmd == 'nominate_master':
                 self.node_id = request.get('node_id')
                 self.is_slave = False
@@ -156,10 +164,10 @@ class Node(threading.Thread):
                 self.master_receive_thread.start()
             elif cmd == 'move_key':
                 self.__move_key(request)
+                response = request.copy()
+                response['src_id'] = self.node_id
         except:
             traceback.print_exc()
-        response = {}
-        response['value'] = value
         return response
 
     def __slave_process(self, message):
@@ -195,14 +203,29 @@ class Node(threading.Thread):
         self.push_to_slave_socket.send('{0} {1}'.format(1, send_data).encode('utf-8'))
 
     def __move_key(self, request):
+        print('current storage: {0}'.format(self.storage))
         key_list = request['key_list']
         target_node = request['target_node']
         self.transfer_socket = self.context.socket(zmq.REQ)
         self.transfer_socket.connect(target_node)
-        print('target node {0}, source id {1}'.format(target_node, self.node_id))
-        self.transfer_socket.send('transfer line established on source node'.encode('utf-8'))
-        print(self.transfer_socket.recv())
+        move_dict = {}
+        for k in key_list:
+            move_dict[k] = self.storage[k]
+        msg = {}
+        msg['cmd'] = 'move_key'
+        msg['dict'] = move_dict
+        msg['key_list'] = key_list
+        self.transfer_socket.send(json.dumps(msg).encode('utf-8'))
+        recv_msg = self.transfer_socket.recv()
+        # TODO : additional error handling
+        for k in key_list:
+            del self.storage[k]
+        print (self.storage)
         self.transfer_socket.close()
+        self.push_to_slave_socket.send('1 {0}'.format({
+            'cmd': 'dump',
+            'data': self.storage,
+        }).encode('utf-8'))
 
     def __connect(self):
         connect_request = {'cmd': 'connect',
