@@ -8,6 +8,7 @@ import zmq
 import psutil
 import os
 import sys, getopt
+import signal
 
 class ZooKeeperManager():
     @staticmethod
@@ -249,6 +250,12 @@ class Node(threading.Thread):
         self.zk.create('/dimint/node/list/{0}'.format(self.node_id),
                        ephemeral=True)
 
+def handler(signum, frame):
+    try:
+        print('Signal handler called with signal', signum)
+    except:
+        print('asdf')
+
 def start_node(config_path=None, host=None, port=None, pull_port=None, push_to_slave_port=None, receive_slave_port=None, transfer_port=None):
     if not config_path is None:
         with open(config_path, 'r') as config_stream:
@@ -268,14 +275,15 @@ def start_node(config_path=None, host=None, port=None, pull_port=None, push_to_s
     if not transfer_port is None:
         config['transfer_port'] = transfer_port
     if not config is None:
+        signal.signal(signal.SIGUSR1, handler)
         Node(config['host'], config['port'], config['pull_port'], config['push_to_slave_port'], config['receive_slave_port'], config['transfer_port']).start()
 
-def main():
+def main(argv = sys.argv[1:]):
     try:
-        opts, args = getopt.getopt(sys.argv[1:], '', ['help', 'config_path', 'host', 'port', 'pull_port', 'push_to_slave_port', 'receive_slave_port'])
-    except getopt.GetoptError:
+        opts, args = getopt.getopt(argv, '', ['help', 'config_path=', 'host=', 'port=', 'pull_port=', 'push_to_slave_port=', 'receive_slave_port=', 'transfer_port='])
+    except getopt.GetoptError as e:
         sys.exit(2)
-    config_path = 'dimint_node/dimint_node.config'
+    config_path = os.path.join(os.path.dirname(__file__), 'dimint_node.config')
     host = None
     port = None
     pull_port = None
@@ -283,7 +291,7 @@ def main():
     receive_slave_port = None
     transfer_port = None
     for opt, arg in opts:
-        if opt == '-help':
+        if opt == '--help':
             print('dimint_node.py --config_path=config_path --host=host --port=port --pull_port=pull_port --push_to_slave_port=push_to_slave_port --receive_slave_port=receive_slave_port --transfer_port=transfer_port')
             sys.exit()
         elif opt == '--config_path':
@@ -301,6 +309,7 @@ def main():
         elif opt == '--transfer_port':
             transfer_port = arg
     start_node(config_path, host, port, pull_port, push_to_slave_port, receive_slave_port, transfer_port)
+    os._exit(0)
 
 if __name__ == '__main__':
     main()
