@@ -31,7 +31,6 @@ def main():
         elif sys.argv[2] == 'help':
             print_dimint_node_help()
         elif sys.argv[2] == 'list':
-            pids = psutil.pids()
             for p in psutil.process_iter():
                 if p.name() == 'python':
                     print('{0}, cmdline : {1}'.format(p, p.cmdline()))
