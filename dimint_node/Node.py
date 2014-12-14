@@ -316,7 +316,7 @@ def main(argv = sys.argv[1:]):
     for opt, arg in opts:
         if opt == '--help':
             print('dimint_node.py --config_path=config_path --host=host --port=port --pull_port=pull_port --push_to_slave_port=push_to_slave_port --receive_slave_port=receive_slave_port --transfer_port=transfer_port')
-            sys.exit()
+            sys.exit(0)
         elif opt == '--config_path':
             config_path = arg
         elif opt == '--host':
@@ -332,6 +332,7 @@ def main(argv = sys.argv[1:]):
         elif opt == '--transfer_port':
             transfer_port = arg
     start_node(config_path, host, port, pull_port, push_to_slave_port, receive_slave_port, transfer_port)
+    sys.exit(0)
 
 if __name__ == '__main__':
     main()

@@ -8,6 +8,7 @@ $ python setup.py install
 $ dimint_node
 $ deactivate
 ```
+* Execution
 ```
 $ source ./myenv/bin/activate
 $ dimint
