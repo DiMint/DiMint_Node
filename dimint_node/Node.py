@@ -35,6 +35,7 @@ class NodeTransferTask(threading.Thread):
         while True:
             sys.stdout.flush()
             msg = json.loads(self.transfer_socket.recv().decode('utf-8'))
+            print('new values updated due to rebalancing : {0}'.format(msg['dict']))
             self.node.storage.update(msg['dict'])
             response = {}
             self.transfer_socket.send(json.dumps(response).encode('utf-8'))
@@ -140,6 +141,7 @@ class Node(threading.Thread):
         self.transfer_task = NodeTransferTask(self.context, self.transfer_port, self)
         self.transfer_task.start()
         signal.signal(signal.SIGUSR1, self.__handler)
+        self.die = False
 
     def run(self):
         poll = zmq.Poller()
@@ -151,19 +153,15 @@ class Node(threading.Thread):
             sockets = dict(poll.poll())
             if self.pull_socket in sockets:
                 ident, message = self.pull_socket.recv_multipart()
+                if self.die:
+                    print('died!')
+                    os._exit(0)
                 result = self.__process(message)
                 response = json.dumps(result).encode('utf-8')
                 print ('Node {0}, Response {1}'.format(self.node_id, response))
                 self.socket.send_multipart([ident, response])
-                '''
-                cmd = response.get('cmd')
-                if cmd == 'move_all_key':
-                    request = response.copy() 
-                    self.__move_key(request)
-                elif cmd == 'die':
-                    print('died!')
-                    sys.exit()
-                    '''
+                if result.get('cmd') == 'move_all_key' and result.get('result') is not None and result.get('result') == 'die':
+                    self.die = True
             elif self.receive_slave_socket in sockets:
                 result = json.loads(self.receive_slave_socket.recv().decode('utf-8'))
                 if result['cmd'] == 'give_dump':
@@ -178,7 +176,9 @@ class Node(threading.Thread):
             else:
                 die_request = {'cmd': 'die',
                                'node_id': self.node_id,
-                               'role': self.role
+                               'role': self.role,
+                               'src_node_id': self.node_id,
+                               'src_node': 'tcp://{0}:{1}'.format(self.get_ip(), self.pull_port)
                               }
                 self.socket.send_json(die_request)
                 #response = json.loads(self.socket.recv_json().decode('utf-8'))
@@ -222,11 +222,12 @@ class Node(threading.Thread):
                 response = request.copy()
                 response['src_id'] = self.node_id
             elif cmd == 'move_all_key':
-                request = response.copy() 
                 self.__move_key(request)
+                response = request.copy()
+                response['result'] = 'die'
             elif cmd == 'die':
                 print('died!')
-                sys.exit()
+                os._exit(0)
         except:
             traceback.print_exc()
         return response
@@ -265,6 +266,7 @@ class Node(threading.Thread):
 
     def __move_key(self, request):
         print('current storage: {0}'.format(self.storage))
+        print(request)
         key_list = request['key_list']
         target_node = request['target_node']
         self.transfer_socket = self.context.socket(zmq.REQ)
