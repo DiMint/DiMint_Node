@@ -89,6 +89,24 @@ class NodeReceiveMasterTask(threading.Thread):
         self._stop().set()
 
 
+class NodeIntervalDumpTask(threading.Thread):
+    def __init__(self, node, pub_socket):
+        threading.Thread.__init__(self)
+        self.node = node
+        self.pub_socket = pub_socket
+
+    def run(self):
+        while True:
+            print('dump to slave in other thread!')
+            # TODO: This works are executed in every ten seconds. Please change
+            # to execute this command only when storage has some change!
+            self.pub_socket.send('1 {0}'.format(json.dumps({
+                "cmd": "dump",
+                "data": self.node.storage,
+            })).encode('utf-8'))
+            time.sleep(10)
+
+
 class Node(threading.Thread):
     def __init__(self, host, port, pull_port, push_to_slave_port,
                  receive_slave_port, transfer_port):
@@ -258,6 +276,9 @@ class Node(threading.Thread):
             req_dump_socket.close()
         else:
             self.is_slave = False
+            self.dump_thread = NodeIntervalDumpTask(self,
+                                                    self.push_to_slave_socket)
+            self.dump_thread.start()
 
     def get_ip(self):
         return [(s.connect(('8.8.8.8', 80)), s.getsockname()[0], s.close())
