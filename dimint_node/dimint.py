@@ -37,6 +37,7 @@ def main():
         elif sys.argv[2] == 'start':
             newpid = os.fork()
             if newpid == 0:
+                sys.stdout = open('Node_{0}.log'.format(os.getpid()), 'w')
                 dimint_node.Node.main(sys.argv[3:])
             else:
                 print('Hello from parent', os.getpid(), newpid)

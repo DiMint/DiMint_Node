@@ -33,6 +33,7 @@ class NodeTransferTask(threading.Thread):
 
     def run(self):
         while True:
+            sys.stdout.flush()
             msg = json.loads(self.transfer_socket.recv().decode('utf-8'))
             self.node.storage.update(msg['dict'])
             response = {}
@@ -50,6 +51,7 @@ class NodeStateTask(threading.Thread):
 
     def run(self):
         while True:
+            sys.stdout.flush()
             print('NodeStateTask works')
             if self.__zk is None:
                 return
@@ -81,6 +83,7 @@ class NodeReceiveMasterTask(threading.Thread):
 
     def run(self):
         while True:
+            sys.stdout.flush()
             result = self.socket.recv()
             self.callback_func(result.decode('utf-8').split(' ', 1)[-1])
 
@@ -97,6 +100,7 @@ class NodeIntervalDumpTask(threading.Thread):
 
     def run(self):
         while True:
+            sys.stdout.flush()
             print('dump to slave in other thread!')
             # TODO: This works are executed in every ten seconds. Please change
             # to execute this command only when storage has some change!
@@ -143,6 +147,7 @@ class Node(threading.Thread):
         poll.register(self.receive_slave_socket, zmq.POLLIN)
 
         while True:
+            sys.stdout.flush()
             sockets = dict(poll.poll())
             if self.pull_socket in sockets:
                 ident, message = self.pull_socket.recv_multipart()
