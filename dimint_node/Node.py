@@ -110,7 +110,6 @@ class NodeIntervalDumpTask(threading.Thread):
             })).encode('utf-8'))
             time.sleep(10)
 
-
 class Node(threading.Thread):
     def __init__(self, host, port, pull_port, push_to_slave_port,
                  receive_slave_port, transfer_port):
@@ -140,6 +139,7 @@ class Node(threading.Thread):
 
         self.transfer_task = NodeTransferTask(self.context, self.transfer_port, self)
         self.transfer_task.start()
+        signal.signal(signal.SIGUSR1, self.__handler)
 
     def run(self):
         poll = zmq.Poller()
@@ -155,10 +155,35 @@ class Node(threading.Thread):
                 response = json.dumps(result).encode('utf-8')
                 print ('Node {0}, Response {1}'.format(self.node_id, response))
                 self.socket.send_multipart([ident, response])
+                '''
+                cmd = response.get('cmd')
+                if cmd == 'move_all_key':
+                    request = response.copy() 
+                    self.__move_key(request)
+                elif cmd == 'die':
+                    print('died!')
+                    sys.exit()
+                    '''
             elif self.receive_slave_socket in sockets:
                 result = json.loads(self.receive_slave_socket.recv().decode('utf-8'))
                 if result['cmd'] == 'give_dump':
                     self.receive_slave_socket.send_json(self.storage)
+
+    def __handler(self, signum, frame):
+        try:
+            print('Signal handler called with signal', signum)
+            if self.socket is None:
+                print('No socket')
+                return
+            else:
+                die_request = {'cmd': 'die',
+                               'node_id': self.node_id,
+                               'role': self.role
+                              }
+                self.socket.send_json(die_request)
+                #response = json.loads(self.socket.recv_json().decode('utf-8'))
+        except:
+            print('Signal handler unexpectedly exited')
 
     def __process(self, message):
         print('Node {0}, Request {1}'.format(self.node_id, message))
@@ -166,7 +191,9 @@ class Node(threading.Thread):
         response = {}
         try:
             request = json.loads(message.decode('utf-8'))
-            cmd = request['cmd']
+            cmd = request.get('cmd')
+            if cmd == None:
+                return {}
             key = request.get('key')
             if cmd == 'get':
                 try:
@@ -183,6 +210,9 @@ class Node(threading.Thread):
                 self.node_id = request.get('node_id')
                 self.is_slave = False
                 self.master_receive_thread = None
+                self.dump_thread = NodeIntervalDumpTask(self,
+                                                        self.push_to_slave_socket)
+                self.dump_thread.start()
             elif cmd == 'change_master':
                 self.master_receive_thread = NodeReceiveMasterTask(
                     request.get('master_addr'), self.__slave_process)
@@ -191,6 +221,12 @@ class Node(threading.Thread):
                 self.__move_key(request)
                 response = request.copy()
                 response['src_id'] = self.node_id
+            elif cmd == 'move_all_key':
+                request = response.copy() 
+                self.__move_key(request)
+            elif cmd == 'die':
+                print('died!')
+                sys.exit()
         except:
             traceback.print_exc()
         return response
@@ -298,12 +334,6 @@ class Node(threading.Thread):
         self.zk.create('/dimint/node/list/{0}'.format(self.node_id),
                        ephemeral=True)
 
-def handler(signum, frame):
-    try:
-        print('Signal handler called with signal', signum)
-    except:
-        print('asdf')
-
 def start_node(config_path=None, host=None, port=None, pull_port=None, push_to_slave_port=None, receive_slave_port=None, transfer_port=None):
     if not config_path is None:
         with open(config_path, 'r') as config_stream:
@@ -323,7 +353,6 @@ def start_node(config_path=None, host=None, port=None, pull_port=None, push_to_s
     if not transfer_port is None:
         config['transfer_port'] = transfer_port
     if not config is None:
-        signal.signal(signal.SIGUSR1, handler)
         Node(config['host'], config['port'], config['pull_port'], config['push_to_slave_port'], config['receive_slave_port'], config['transfer_port']).start()
 
 def main(argv = sys.argv[1:]):
