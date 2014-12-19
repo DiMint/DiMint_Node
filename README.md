@@ -22,6 +22,7 @@ $ deactivate
 * push\_to\_slave\_port: port for send request to it's slaves. default is 5558.
 * receive\_slave\_port: port for receive slave's request. default is 5600.
 * transfer\_port: port for transfer data to other node. default is 5700.
+
 ### How to use
 ```bash
 $ dimint_node --host=127.0.0.1 --port=5557 --pull_port=15558 --push_to_slave_port=5558 --receive_to_slave_port=5600 --transfer_port=5700
