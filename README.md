@@ -2,13 +2,14 @@
 DiMint Ndoe는 DiMint Storage에서 실제로 key-value를 저장하는 기능을 담당합니다.
 ## PreRequirements
 * Python3 이상
+
 ## Installation
-1. 해당 저장소를 다운받고, 해당 폴더로 이동합니다.
+해당 저장소를 다운받고, 해당 폴더로 이동합니다.
 ```bash
 $ git clone https://github.com/DiMint/DiMint_Node
 $ cd DiMint_Node
 ```
-2. setup.py를 선택하여 실행합니다. Python 2에서는 정상 작동이 보장되지 않으므로, Python 3를 이용하는 것을 권장합니다.
+setup.py를 선택하여 실행합니다. Python 2에서는 정상 작동이 보장되지 않으므로, Python 3를 이용하는 것을 권장합니다.
 ```bash
 $ python setup.py install
 ```
